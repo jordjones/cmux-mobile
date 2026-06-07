@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Lock page zoom: the A-/A+ font stepper is the single scaling control.
+         Pinch/double-tap zoom on an installed PWA gets "stuck" with no reset and
+         pushes the absolutely-positioned chrome off-screen. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>cmux mobile</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: #14181d;
+        --line: #232a31;
+        --fg: #d7dde3;
+        --dim: #8a939c;
+        --accent: #e8833a;
+        --term-font-size: 12px;
+      }
+      * { box-sizing: border-box; }
+      /* terminal-key ergonomics: no long-press callout, no text selection, no grey tap flash */
+      button {
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      /* visible focus ring for keyboard / accessibility (doesn't show on touch taps) */
+      button:focus-visible,
+      #compose-input:focus-visible,
+      #picker-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        -webkit-text-size-adjust: 100%;
+      }
+      body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: env(safe-area-inset-top) 12px 8px;
+        padding-top: max(env(safe-area-inset-top), 8px);
+        padding-left: max(env(safe-area-inset-left), 12px);
+        padding-right: max(env(safe-area-inset-right), 12px);
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      header button {
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        min-height: 44px;
+        padding: 0 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font: inherit;
+        font-size: 15px;
+      }
+      #title {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 1px;
+        padding-left: 8px;
+        border-left: 2px solid var(--accent);
+        overflow: hidden;
+        cursor: pointer;
+      }
+      #title:active { opacity: 0.7; }
+      #title-workspace {
+        display: block;
+        font-size: 10px;
+        color: var(--dim);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 55%;
+        line-height: 1.2;
+      }
+      #title-workspace:empty { display: none; }
+      #title-tab {
+        display: block;
+        font-size: 13px;
+        color: var(--fg);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+      }
+      #status { font-size: 11px; color: var(--dim); }
+      #status[data-state="open"] { color: #5fd08a; }
+      #status[data-state="closed"] { color: #e0604f; }
+
+      #banner {
+        padding: 6px 12px;
+        font-size: 12px;
+        text-align: center;
+        color: #0b0d10;
+        font-weight: 600;
+      }
+      #banner[hidden] { display: none; }
+      #banner[data-state="connecting"] { background: #e8b23a; }
+      #banner[data-state="closed"] { background: #e0604f; }
+
+      #toasts {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(env(safe-area-inset-bottom) + 120px); /* clear the footer + compose bar */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        pointer-events: none;
+        z-index: 15;
+      }
+      .toast {
+        background: #1b2026;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 13px;
+        max-width: 90%;
+        opacity: 0.97;
+      }
+      .toast.leaving { opacity: 0; transition: opacity 0.2s; }
+
+      main { position: relative; flex: 1; min-height: 0; }
+      #screen {
+        margin: 0;
+        height: 100%;
+        overflow: auto;
+        padding: 8px max(env(safe-area-inset-right), 10px) 8px max(env(safe-area-inset-left), 10px);
+        font-size: var(--term-font-size);
+        line-height: 1.3;
+        white-space: pre;        /* never re-wrap: scroll horizontally */
+        tab-size: 8;
+        color: var(--fg);
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;  /* don't rubber-band / pull-to-refresh the page */
+        touch-action: pan-x pan-y;     /* own the pan; don't trigger edge-swipe nav */
+        -webkit-user-select: text;     /* allow long-press selection + the iOS Copy callout */
+        user-select: text;
+        -webkit-touch-callout: default;
+      }
+      /* transient reconnect (gentle, after a grace period) vs persistent checksum divergence (heavier, actionable) */
+      #screen.reconnecting { opacity: 0.6; transition: opacity 0.15s; }
+      #screen.desync { opacity: 0.45; filter: grayscale(0.3); transition: opacity 0.15s; }
+      /* one node per terminal row; max-content so wide rows drive horizontal scroll,
+         min-height so blank rows still occupy a line */
+      #screen .row { width: max-content; min-height: 1.3em; }
+      /* soft-wrap toggle: rows reflow instead of horizontal-scrolling */
+      #screen.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+      #screen.wrap .row { width: auto; }
+      /* right-edge fade when content is clipped off-screen (wrap off, scrollable right) */
+      #cliphint {
+        position: absolute; right: 6px; bottom: 6px; z-index: 3;
+        pointer-events: none;
+        padding: 1px 7px; border-radius: 8px;
+        background: rgba(20, 24, 29, 0.85); color: var(--dim);
+        font-size: 11px; line-height: 1.5;
+      }
+      #cliphint[hidden] { display: none; }
+
+      #picker {
+        position: absolute;
+        inset: 0 30% 0 0;
+        max-width: 460px;
+        display: flex;
+        flex-direction: column;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        transform: translateX(-100%);
+        transition: transform 0.15s ease;
+        z-index: 5;
+        /* clear a left notch / home indicator when the drawer hugs the screen edge in landscape */
+        padding-left: max(env(safe-area-inset-left), 0px);
+      }
+      #picker.open { transform: translateX(0); }
+      #picker-header { display: flex; gap: 6px; align-items: center; padding: 6px; border-bottom: 1px solid var(--line); }
+      #picker-search {
+        flex: 1; min-width: 0;
+        background: var(--bg); color: var(--fg);
+        border: 1px solid var(--line); border-radius: 8px;
+        padding: 8px 10px; font: inherit; font-size: 14px;
+      }
+      #picker-close {
+        background: transparent; color: var(--fg);
+        border: 1px solid var(--line); border-radius: 8px;
+        min-height: 44px; padding: 6px 14px; font: inherit; font-size: 15px;
+      }
+      #picker-list { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding-bottom: env(safe-area-inset-bottom); }
+      #picker-scrim { position: absolute; inset: 0; z-index: 4; background: rgba(8, 10, 12, 0.5); }
+      #picker-scrim[hidden] { display: none; }
+      .picker-group { padding: 10px 12px 4px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+      .picker-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        color: var(--fg);
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        min-height: 44px;
+        padding: 12px;
+        font: inherit;
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .picker-item.active {
+        color: var(--accent);
+        background: #1b2026;
+        border-left: 3px solid var(--accent);
+        padding-left: 9px;
+      }
+      .picker-item.attn::before {
+        content: "●";
+        color: var(--accent);
+        margin-right: 8px;
+        font-size: 10px;
+        vertical-align: middle;
+      }
+      .picker-empty { padding: 16px; color: var(--dim); }
+
+      /* dynamic shortcut bar — keys detected live in the terminal (accent-outlined) */
+      #autokeys {
+        display: flex;
+        gap: 6px;
+        padding: 4px 8px;
+        padding-left: max(env(safe-area-inset-left), 8px);
+        padding-right: max(env(safe-area-inset-right), 8px);
+        background: #11161b;
+        border-top: 1px solid var(--line);
+        overflow-x: auto;
+      }
+      #autokeys[hidden] { display: none; }
+      #autokeys button {
+        flex: 0 0 auto;
+        min-height: 38px;
+        padding: 0 12px;
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        font: inherit;
+        font-size: 14px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #autokeys button:active { background: var(--accent); color: #0b0d10; }
+      /* reclaim a row while the keyboard is up — footer keys stay (esc/^C/arrows) */
+      body.kb-up #autokeys { display: none; }
+      footer#keys {
+        display: flex;
+        gap: 6px;
+        padding: 6px 8px;
+        /* the compose bar below now owns the bottom safe-area inset */
+        padding-left: max(env(safe-area-inset-left), 8px);
+        padding-right: max(env(safe-area-inset-right), 8px);
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+        overflow-x: auto;
+      }
+      footer#keys button {
+        flex: 0 0 auto;
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #1b2026;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 12px;
+        font: inherit;
+        font-size: 15px;
+      }
+      footer#keys button:active { background: var(--accent); color: #0b0d10; }
+      /* grouped arrow d-pad — visually bounded, press-and-hold to repeat */
+      .dpad {
+        display: inline-flex;
+        flex: 0 0 auto;
+        gap: 4px;
+        padding: 0 6px;
+        border-left: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+      }
+      #morekeys,
+      #settings {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 16;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+        padding: 8px max(env(safe-area-inset-right), 8px)
+          max(env(safe-area-inset-bottom), 8px) max(env(safe-area-inset-left), 8px);
+      }
+      #morekeys[hidden], #settings[hidden] { display: none; }
+      #morekeys-head,
+      #settings-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        color: var(--dim);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      #morekeys-close,
+      #settings-close {
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        min-height: 36px;
+        min-width: 44px;
+        font: inherit;
+        font-size: 15px;
+      }
+      #morekeys-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+        gap: 6px;
+      }
+      #morekeys-grid button {
+        min-height: 44px;
+        background: #1b2026;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font: inherit;
+        font-size: 14px;
+      }
+      #morekeys-grid button:active { background: var(--accent); color: #0b0d10; }
+      /* settings rows */
+      #settings-body { display: flex; flex-direction: column; gap: 8px; }
+      .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+      .switch {
+        flex: 0 0 auto;
+        min-width: 64px; min-height: 36px;
+        background: #1b2026; color: var(--dim);
+        border: 1px solid var(--line); border-radius: 999px;
+        font: inherit; font-size: 14px;
+      }
+      .switch[aria-checked="true"] { background: var(--accent); color: #0b0d10; border-color: var(--accent); }
+      .set-hint { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.4; }
+      /* dim auto-shortcut indicator in the footer; accent when keys are live */
+      #shortcut-ind { color: var(--dim); }
+      #shortcut-ind.active { color: var(--accent); border-color: var(--accent); }
+      /* compose history recall */
+      #compose { position: relative; }
+      #histbtn {
+        flex: 0 0 auto; min-width: 40px; min-height: 44px;
+        background: #1b2026; color: var(--fg);
+        border: 1px solid var(--line); border-radius: 10px;
+        font: inherit; font-size: 16px;
+      }
+      #histbtn[hidden] { display: none; }
+      #histpop {
+        position: absolute;
+        left: 8px; right: 8px; bottom: calc(100% + 4px);
+        max-height: 40vh; overflow: auto;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+        z-index: 17;
+      }
+      #histpop[hidden] { display: none; }
+      #histpop button {
+        display: block; width: 100%; text-align: left;
+        background: transparent; color: var(--fg);
+        border: 0; border-bottom: 1px solid var(--line);
+        min-height: 44px; padding: 10px 12px;
+        font: inherit; font-size: 13px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #histpop button:active { background: #1b2026; }
+      #pair {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(8, 10, 12, 0.92);
+        padding: max(env(safe-area-inset-top), 24px) max(env(safe-area-inset-right), 24px)
+          max(env(safe-area-inset-bottom), 24px) max(env(safe-area-inset-left), 24px);
+      }
+      #pair[hidden] { display: none; }
+      .pair-card {
+        width: 100%;
+        max-width: 340px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 20px;
+        text-align: center;
+      }
+      .pair-card h2 { margin: 0 0 8px; font-size: 16px; }
+      .pair-card p { margin: 0 0 16px; font-size: 13px; color: var(--dim); }
+      #paircode {
+        width: 100%;
+        font: inherit;
+        font-size: 28px;
+        letter-spacing: 0.3em;
+        text-align: center;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      #pairgo {
+        width: 100%;
+        background: var(--accent);
+        color: #0b0d10;
+        border: 0;
+        border-radius: 10px;
+        padding: 13px;
+        font: inherit;
+        font-weight: 600;
+        font-size: 15px;
+      }
+      #pairmsg { margin-top: 10px; font-size: 12px; color: var(--dim); min-height: 16px; }
+
+      /* visible compose bar — what you type is shown here, sent on Send (no blind typing) */
+      #compose {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        padding: 6px 8px;
+        padding-bottom: max(env(safe-area-inset-bottom), 6px);
+        padding-left: max(env(safe-area-inset-left), 8px);
+        padding-right: max(env(safe-area-inset-right), 8px);
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+      }
+      #compose-input {
+        flex: 1;
+        min-width: 0;
+        resize: none;
+        min-height: 44px;
+        max-height: 96px;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+        /* >=16px so iOS Safari doesn't auto-zoom the page when the field focuses */
+        font-size: 16px;
+        line-height: 1.3;
+      }
+      #compose-send {
+        flex: 0 0 auto;
+        min-width: 60px;
+        min-height: 44px;
+        background: var(--accent);
+        color: #0b0d10;
+        border: 0;
+        border-radius: 10px;
+        padding: 0 16px;
+        font: inherit;
+        font-weight: 600;
+        font-size: 15px;
+      }
+      #compose-send:active { filter: brightness(0.9); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="menu" aria-label="Open terminals">☰</button>
+      <span id="title" aria-label="Current terminal">
+        <span id="title-workspace"></span>
+        <span id="title-tab">—</span>
+      </span>
+      <button id="font-dec" aria-label="Smaller text">A-</button>
+      <button id="font-inc" aria-label="Larger text">A+</button>
+      <button id="refresh" aria-label="Refresh surfaces">⟳</button>
+      <button id="settings-btn" aria-label="Settings">⚙</button>
+      <span id="status">connecting</span>
+    </header>
+    <div id="banner" hidden></div>
+    <main>
+      <nav id="picker" inert>
+        <div id="picker-header">
+          <input
+            id="picker-search"
+            type="search"
+            placeholder="Filter terminals"
+            aria-label="Filter terminals"
+            autocomplete="off"
+          />
+          <button id="picker-close" aria-label="Close terminals">✕</button>
+        </div>
+        <div id="picker-list"></div>
+      </nav>
+      <div id="picker-scrim" hidden></div>
+      <div id="screen"></div>
+      <div id="cliphint" hidden aria-hidden="true">more ▸</div>
+    </main>
+    <div id="toasts"></div>
+    <div id="autokeys" hidden></div>
+    <footer id="keys">
+      <button data-key="escape" aria-label="Escape">esc</button>
+      <button data-key="tab" aria-label="Tab">tab</button>
+      <button data-key="ctrl-c" aria-label="Control C">^C</button>
+      <button data-key="ctrl-d" aria-label="Control D">^D</button>
+      <span class="dpad" role="group" aria-label="Arrow keys">
+        <button data-key="left" data-repeat aria-label="Arrow left">←</button>
+        <button data-key="up" data-repeat aria-label="Arrow up">↑</button>
+        <button data-key="down" data-repeat aria-label="Arrow down">↓</button>
+        <button data-key="right" data-repeat aria-label="Arrow right">→</button>
+      </span>
+      <button id="pastebtn" aria-label="Paste">paste</button>
+      <button id="morebtn" aria-label="More keys">keys</button>
+      <button id="shortcut-ind" aria-label="Auto-shortcut status">⚡</button>
+    </footer>
+    <div id="morekeys" hidden>
+      <div id="morekeys-head">
+        <span>More keys</span>
+        <button id="morekeys-close" aria-label="Close more keys">✕</button>
+      </div>
+      <div id="morekeys-grid">
+        <button data-key="shift-tab" aria-label="Shift Tab">⇧⇥</button>
+        <button data-key="ctrl-o" aria-label="Control O">^O</button>
+        <button data-key="ctrl-r" aria-label="Control R">^R</button>
+        <button data-key="ctrl-a" aria-label="Control A">^A</button>
+        <button data-key="ctrl-e" aria-label="Control E">^E</button>
+        <button data-key="ctrl-u" aria-label="Control U">^U</button>
+        <button data-key="ctrl-k" aria-label="Control K">^K</button>
+        <button data-key="ctrl-w" aria-label="Control W">^W</button>
+        <button data-key="ctrl-l" aria-label="Control L">^L</button>
+        <button data-key="home" aria-label="Home">home</button>
+        <button data-key="end" aria-label="End">end</button>
+        <button data-key="pageup" aria-label="Page up">pgup</button>
+        <button data-key="pagedown" aria-label="Page down">pgdn</button>
+        <button data-key="ctrl-left" aria-label="Control left">^←</button>
+        <button data-key="ctrl-right" aria-label="Control right">^→</button>
+        <button data-key="alt-b" aria-label="Alt B">⌥b</button>
+        <button data-key="alt-f" aria-label="Alt F">⌥f</button>
+      </div>
+    </div>
+    <div id="settings" hidden>
+      <div id="settings-head">
+        <span>Settings</span>
+        <button id="settings-close" aria-label="Close settings">✕</button>
+      </div>
+      <div id="settings-body">
+        <div class="set-row">
+          <span>Return key sends the line</span>
+          <button id="set-returnsends" class="switch" role="switch" aria-checked="false">Off</button>
+        </div>
+        <div class="set-row">
+          <span>Soft-wrap long lines</span>
+          <button id="set-wrap" class="switch" role="switch" aria-checked="false">Off</button>
+        </div>
+        <p class="set-hint">Return: off = newline (tap Send to run); on = sends. Soft-wrap reflows long output instead of side-scrolling.</p>
+      </div>
+    </div>
+    <div id="compose">
+      <div id="histpop" hidden></div>
+      <button id="histbtn" aria-label="Recent commands" hidden>↑</button>
+      <textarea
+        id="compose-input"
+        rows="1"
+        placeholder="Message — Send to run (Return = newline)"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        aria-label="Compose message"
+      ></textarea>
+      <button id="compose-send" aria-label="Send message">Send</button>
+    </div>
+    <div id="pair" hidden>
+      <div class="pair-card">
+        <h2>Pair this device</h2>
+        <p>Enter the 6-digit code shown in the cmux-bridge terminal on your Mac.</p>
+        <input
+          id="paircode"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="6"
+          placeholder="000000"
+        />
+        <button id="pairgo">Pair</button>
+        <div id="pairmsg"></div>
+      </div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

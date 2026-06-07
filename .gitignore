@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.cmux-bridge/
+# local secrets / device tokens
+*.local.json
+tokens.json
+
+# OMC session state (local, not project)
+.omc/
+
+# Playwright MCP scratch output
+.playwright-mcp/

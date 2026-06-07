@@ -1,0 +1,22 @@
+{
+  "name": "cmux-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "smoke": "bun run scripts/smoke.ts",
+    "bridge": "bun run packages/bridge/src/main.ts",
+    "dev": "bun run --watch packages/bridge/src/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.ts",
+    "setup": "bun install && bun run build && bun run dist/cli.js install"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
