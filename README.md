@@ -1,38 +1,30 @@
 # cmux-mobile
 
+![cmux-mobile — the same cmux session, live on your Mac, iPad, and iPhone](assets/hero.png)
+
 Drive your **local [cmux](https://cmux.com) terminal/agent sessions from an iPhone/iPad** — full interactive control, over your own Tailscale tailnet, with no cmux cloud account and no app to install on the phone.
 
 cmux exposes its panes only through a local Unix-domain socket. `cmux-mobile` is a small **bridge** that runs on your Mac, speaks that socket, and serves a **web app (PWA)** you open in mobile Safari and add to your Home Screen. Traffic stays inside your tailnet (WireGuard-encrypted); nothing goes to a third party.
 
 ## Prerequisites
 
-- **macOS** with **cmux ≥ 0.64** running.
+- **[cmux](https://cmux.com)** installed and running on macOS (**≥ 0.64**) — the terminal multiplexer this app bridges to. cmux-mobile does nothing on its own; it mirrors a cmux that's already running.
 - **[Tailscale](https://tailscale.com)** installed and signed in on **both** the Mac **and** the phone, on the same tailnet.
-- **[Bun](https://bun.sh)** on the Mac (`brew install oven-sh/bun/bun`). cmux-mobile is a Bun program, so run it with `bunx` (not `npx`).
+- **[Bun](https://bun.sh)** on the Mac (`brew install oven-sh/bun/bun`) — cmux-mobile is a Bun program.
 
 ## Install & run
 
-**Option A — one command (npm):**
-
 ```bash
-bunx cmux-mobile            # run the bridge in the foreground (Ctrl-C to stop)
-# or keep it running across logins/reboots:
-bunx cmux-mobile install    # installs a launchd login agent, then prints the URL + log path
+git clone https://github.com/jordjones/cmux-mobile.git && cd cmux-mobile
+bun run setup               # installs deps, builds, and installs a launchd login agent
 ```
 
-**Option B — from source:**
-
-```bash
-git clone <repo-url> cmux-mobile && cd cmux-mobile
-bun run setup               # installs deps, builds, and installs the launchd agent
-```
-
-Either way, the bridge prints a URL like `http://100.x.y.z:4380` (your Mac's tailnet IP).
+The bridge prints a URL like `http://100.x.y.z:4380` (your Mac's tailnet IP). Prefer to run it in the foreground instead of as a login agent? Use `bun run bridge` (Ctrl-C to stop).
 
 ## On the phone (same tailnet)
 
 1. Open that URL in **Safari**.
-2. In the default **`tailnet`** auth mode you're connected immediately (any device on your own tailnet, no code). In `token` mode, enter the 6-digit pairing code from the log — or mint one headlessly: `cmux-mobile pair add "iPhone"` (prints a one-tap URL).
+2. In the default **`tailnet`** auth mode you're connected immediately (any device on your own tailnet, no code). In `token` mode, enter the 6-digit pairing code from the log — or mint one headlessly from the repo: `bun run dist/cli.js pair add "iPhone"` (prints a one-tap URL).
 3. **Share → Add to Home Screen** for a full-screen app.
 
 Pick a terminal from the ☰ menu, tap the compose bar to type, Send to run, and use the bottom toolbar for `esc` / `^C` / arrows / a "more keys" sheet. Scroll to the top for history; tap the title to copy `workspace / tab`.
@@ -40,9 +32,9 @@ Pick a terminal from the ☰ menu, tap the compose bar to type, Send to run, and
 ## Manage
 
 ```bash
-cmux-mobile pair list
-cmux-mobile pair revoke <id>
-cmux-mobile uninstall        # remove the launchd agent
+bun run dist/cli.js pair list
+bun run dist/cli.js pair revoke <id>
+bun run dist/cli.js uninstall   # remove the launchd agent
 ```
 
 ## Configuration (env)
