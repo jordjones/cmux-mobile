@@ -7,6 +7,7 @@ import type { BridgeConfig } from "./config.ts";
 import { CmuxSocketClient } from "./socket-client.ts";
 import { Topology } from "./topology.ts";
 import { InputRouter } from "./input-router.ts";
+import { WorkspaceOps } from "./workspace-ops.ts";
 import { startBridgeServer } from "./server.ts";
 import { EventsClient } from "./events-client.ts";
 import { Notifier } from "./notifier.ts";
@@ -26,6 +27,7 @@ export async function run(cfg: BridgeConfig): Promise<void> {
   const host = cfg.host ?? (await TailscaleVerifier.selfIPv4()) ?? "127.0.0.1";
   const topology = new Topology(client);
   const input = new InputRouter(client);
+  const ops = new WorkspaceOps(client);
 
   const server = await startBridgeServer(
     {
@@ -35,7 +37,7 @@ export async function run(cfg: BridgeConfig): Promise<void> {
       webDir: cfg.webDir,
       webEntry: cfg.webEntry,
     },
-    { client, topology, input, auth: { verifier, tokens, pairing } },
+    { client, topology, input, ops, auth: { verifier, tokens, pairing } },
   );
 
   // Auto-refresh the picker when workspaces/surfaces change, and on cmux restart.

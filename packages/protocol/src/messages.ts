@@ -43,6 +43,11 @@ export type ClientMessage =
   | { t: "resync"; surfaceId: SurfaceId }
   | { t: "pause"; surfaceId: SurfaceId }
   | { t: "resume"; surfaceId: SurfaceId }
+  // Create a fresh workspace (cmux opens a new terminal on creation), or add a
+  // terminal to an existing workspace. The bridge replies with a `created`
+  // frame carrying the new surfaceId so the client can auto-open it.
+  | { t: "workspace.create" }
+  | { t: "surface.create"; workspaceId: string }
   // Liveness heartbeat: the client pings on a timer and force-reconnects if no
   // pong arrives, so half-open sockets (common on iOS network handoffs) are
   // detected instead of silently freezing the mirror.
@@ -59,6 +64,9 @@ export interface ServerCaps {
 export type ServerMessage =
   | { t: "hello.ok"; device: string; caps: ServerCaps }
   | { t: "topology"; surfaces: SurfaceInfo[] }
+  // Ack for workspace.create / surface.create: the freshly created terminal the
+  // client should auto-open (it also lands in the topology sent just before this).
+  | { t: "created"; surfaceId: SurfaceId; workspaceId: string }
   | { t: "screen.full"; surfaceId: SurfaceId; rev: number; cols: number; rows: string[] }
   | { t: "screen.diff"; surfaceId: SurfaceId; rev: number; ops: RowOp[] }
   | { t: "screen.checksum"; surfaceId: SurfaceId; rev: number; hash: string }

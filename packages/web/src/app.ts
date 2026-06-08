@@ -205,7 +205,14 @@ function main(): void {
     }
     autokeysEl.hidden = false;
   }
-  const picker = new Picker(el("picker-list"), (surfaceId) => selectSurface(surfaceId));
+  const picker = new Picker(
+    el("picker-list"),
+    (surfaceId) => selectSurface(surfaceId),
+    (workspaceId) => {
+      transport.send({ t: "surface.create", workspaceId });
+      toast("Adding terminal…");
+    },
+  );
   const scrimEl = el("picker-scrim");
 
   function openPicker(): void {
@@ -254,6 +261,18 @@ function main(): void {
     closePicker();
   }
 
+  // Auto-open a freshly created workspace/terminal. The bridge sends `topology`
+  // then `created`, so the new surface is usually already in lastSurfaces by the
+  // time `created` arrives; if not, the next topology refresh picks it up.
+  let pendingCreatedId: string | null = null;
+  function trySelectPending(): void {
+    if (pendingCreatedId && lastSurfaces.some((s) => s.surfaceId === pendingCreatedId)) {
+      const id = pendingCreatedId;
+      pendingCreatedId = null;
+      selectSurface(id);
+    }
+  }
+
   initFeedback({
     banner: el("banner"),
     toastHost: el("toasts"),
@@ -282,6 +301,7 @@ function main(): void {
         const present = new Set(msg.surfaces.map((s) => s.surfaceId));
         pruneMru(present);
         renderPicker();
+        trySelectPending(); // a just-created surface may have arrived in this refresh
         if (!model.surfaceId) {
           // First load: restore the most-recent surface if still present, else the first.
           const pick = mruFront(present) ?? msg.surfaces[0]?.surfaceId;
@@ -352,6 +372,12 @@ function main(): void {
         renderPicker();
         return;
       }
+      case "created": {
+        // The new workspace/terminal; open it as soon as it's in the topology.
+        pendingCreatedId = msg.surfaceId;
+        trySelectPending();
+        return;
+      }
       case "error": {
         // Input failures are user-facing; mirror/connection errors stay in the console
         // (the connection banner already covers those).
@@ -359,6 +385,8 @@ function main(): void {
           input_disabled: "Input not enabled",
           input_failed: "Couldn't send — pane unavailable",
           input_queue_full: "Sending too fast — paused",
+          create_failed: "Couldn't create — try again",
+          create_disabled: "Creating isn't enabled",
         };
         const text = human[msg.code];
         if (text) toast(text);
@@ -378,6 +406,10 @@ function main(): void {
   );
   scrimEl.addEventListener("click", () => closePicker());
   el("picker-close").addEventListener("click", () => closePicker());
+  el("picker-new").addEventListener("click", () => {
+    transport.send({ t: "workspace.create" });
+    toast("Creating workspace…");
+  });
   el<HTMLInputElement>("picker-search").addEventListener("input", (e) =>
     picker.setFilter((e.target as HTMLInputElement).value),
   );

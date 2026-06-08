@@ -13,6 +13,7 @@ export class Picker {
   constructor(
     private readonly el: HTMLElement,
     private readonly onSelect: (surfaceId: string) => void,
+    private readonly onAddTerminal: (workspaceId: string) => void,
   ) {}
 
   render(surfaces: SurfaceInfo[], activeId: string | null, attention?: ReadonlySet<string>): void {
@@ -49,9 +50,25 @@ export class Picker {
     for (const s of matches) {
       if (s.workspaceRef !== lastWorkspace) {
         lastWorkspace = s.workspaceRef;
+        const name = s.workspaceTitle?.trim() || s.workspaceRef;
         const hdr = document.createElement("div");
         hdr.className = "picker-group";
-        hdr.textContent = s.workspaceTitle?.trim() || s.workspaceRef;
+        const label = document.createElement("span");
+        label.className = "picker-group-label";
+        label.textContent = name;
+        // "+" adds a fresh terminal to THIS workspace. stopPropagation so the tap
+        // doesn't bubble to a surface row; the workspace id is captured per header.
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "picker-add";
+        add.textContent = "+";
+        add.setAttribute("aria-label", `New terminal in ${name}`);
+        const workspaceId = s.workspaceId;
+        add.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.onAddTerminal(workspaceId);
+        });
+        hdr.append(label, add);
         this.el.append(hdr);
       }
       const btn = document.createElement("button");

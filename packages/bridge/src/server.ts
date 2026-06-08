@@ -19,6 +19,7 @@ import type { Topology } from "./topology.ts";
 import { SurfaceMirror } from "./surface-mirror.ts";
 import { normalizeRows } from "./screen-diff.ts";
 import type { InputRouter } from "./input-router.ts";
+import type { WorkspaceOps } from "./workspace-ops.ts";
 import type { PairingManager, TailscaleVerifier, TokenStore } from "./auth.ts";
 import { normalizeIp } from "./auth.ts";
 import type { AuthMode } from "./config.ts";
@@ -41,6 +42,7 @@ export interface BridgeServerDeps {
   client: CmuxSocketClient;
   topology: Topology;
   input?: InputRouter;
+  ops?: WorkspaceOps;
   auth: AuthBundle;
 }
 
@@ -266,6 +268,27 @@ async function handleClientMessage(
       if (m) {
         m.reset();
         m.start();
+      }
+      return;
+    }
+
+    case "workspace.create":
+    case "surface.create": {
+      if (!deps.ops) {
+        safeSend(ws, { t: "error", code: "create_disabled", message: "create not enabled" });
+        return;
+      }
+      try {
+        const created =
+          msg.t === "workspace.create"
+            ? await deps.ops.createWorkspace()
+            : await deps.ops.createSurface(msg.workspaceId);
+        // Topology first so the client's surface list already includes the new
+        // surface when it handles `created` (a WebSocket preserves message order).
+        await sendTopology(ws, deps);
+        safeSend(ws, { t: "created", surfaceId: created.surfaceId, workspaceId: created.workspaceId });
+      } catch (e) {
+        safeSend(ws, { t: "error", code: "create_failed", message: (e as Error).message });
       }
       return;
     }
